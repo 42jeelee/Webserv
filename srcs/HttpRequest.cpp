@@ -6,7 +6,7 @@
 /******************************************************************************/
 
 HttpRequest::HttpRequest() 
-  : _h_field(kHeaderNo), _has_host(false),
+  : _h_field(kHeaderNo),_content_length(0), _has_host(false),
     _is_chunked(false), _is_connection_keep_alive(false),
   _is_connection_close(false), _is_content_length(false), _header_arrived(false), _entity_arrived(false) {}
 
@@ -183,18 +183,48 @@ bool HttpRequest::parseHeaderValue(
   return true;
 }
 
+int atoh(const std::vector<char>& buf, size_t& i) {
+    int hex = 0;
+    
+    while (i < buf.size() && buf[i] != '\n') ++i;
+    if (buf.size() <= i) return -1;
+    
+    if (buf[i - 1] == '\r') --i;
+    
+    for (size_t j = 0; j < i; ++j) {
+        if ('0' <= buf[j] && buf[j] <= '9') hex = hex * 16 + buf[j] - '0';
+        else if ('A' <= buf[j] && buf[j] <= 'F') hex = hex * 16 + buf[j] - 'A' + 10;
+        else if ('a' <= buf[j] && buf[j] <= 'f') hex = hex * 16 + buf[j] - 'a' + 10;
+        else return -1;
+    }
+    return hex;
+}
+
 int HttpRequest::settingContent(const std::vector<char>& buf) {
   size_t i = 0;
 
-  for (; i < buf.size(); ++i) {
-    if (_entity.size() == _content_length) {
-      _entity_arrived = true;
-      break ;
+  if (_is_chunked) {
+    if (!_content_length) {
+      int hex = atoh(buf, i);
+      if (hex > 0) _content_length = static_cast<unsigned long long>(hex);
+      else if (hex == 0) _entity_arrived = true;
+      else if (hex < 0) { /* error */ }
     }
-    _entity.push_back(buf[i]);
-  }
+    for (; i < buf.size(); ++i) {
+      if (_content_length == 0) break ;
+      _entity.push_back(buf[i]);
+    }
+  } else {
+    for (; i < buf.size(); ++i) {
+      if (_entity.size() == _content_length) {
+        _entity_arrived = true;
+        break ;
+      }
+      _entity.push_back(buf[i]);
+    }
 
-  if (_entity.size() == _content_length)
-    _entity_arrived = true;
+    if (_entity.size() == _content_length)
+      _entity_arrived = true;
+  }
   return i;
 }
